@@ -287,47 +287,7 @@ int main(int argc, char* argv[]) {
 
     cout << "[OK] Generated → " << cpp_out << endl;
 
-    if (should_run) {
-        string cmd = "g++ \"" + cpp_out + "\" -o \"" + exe_out + "\" -std=c++17";
-        cout << "[Compiling] " << cmd << endl;
-        if (system(cmd.c_str()) != 0) {
-            cerr << "[Compilation failed]\n";
-            return 1;
-        }
-
-        // Use PowerShell on Windows so './exe' works; otherwise use native './exe'
-        // Runtime OS detection: prefer checking the `OS` environment variable
-        // (on Windows it's usually "Windows_NT"). Fall back to compile-time
-        // `_WIN32` if `OS` is not present.
-        const char* os_env_p = getenv("OS");
-        string os_env = os_env_p ? string(os_env_p) : string();
-        bool is_windows_runtime = false;
-    #ifdef _WIN32
-        is_windows_runtime = true;
-    #endif
-        if (!os_env.empty()) {
-            string os_l = os_env;
-            transform(os_l.begin(), os_l.end(), os_l.begin(), ::tolower);
-            if (os_l.find("windows") != string::npos) is_windows_runtime = true;
-            else if (os_l.find("linux") != string::npos || os_l.find("unix") != string::npos) is_windows_runtime = false;
-        }
-
-        string run_cmd;
-        if (is_windows_runtime) {
-            string exe_path = exe_out;
-            bool has_drive = exe_path.size() >= 2 && isalpha(static_cast<unsigned char>(exe_path[0])) && exe_path[1] == ':';
-            bool has_slash = exe_path.find('/') != string::npos || exe_path.find('\\') != string::npos;
-            string ps_target = (has_drive || has_slash) ? exe_path : string("./") + exe_path;
-            for (char &c : ps_target) if (c == '/') c = '\\';
-            run_cmd = string("powershell -NoProfile -ExecutionPolicy Bypass -Command \"") + "& '" + ps_target + "'" + "\"";
-        } else {
-            string target = exe_out;
-            if (target.find('/') == string::npos) target = string("./") + target;
-            run_cmd = string("/bin/sh -c \"") + target + string("\"");
-        }
-        cout << "[Running] " << run_cmd << "\n" << string(40, '-') << "\n";
-        system(run_cmd.c_str());
-    }
+    // Finished: emitted C++ source only (no compilation performed).
 
     return 0;
 }
