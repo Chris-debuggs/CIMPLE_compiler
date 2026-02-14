@@ -1,16 +1,18 @@
 // cimplec.cpp
-// Final merged & improved Cimple → C++ transpiler
-// Supports: types, multi-arg print, typed def, range-for, indentation-aware blocks, etc.
-// Compile with: g++ cimplec.cpp -o cimplec -std=c++17
+// Cimple (.cimp) → C++ transpiler
+// Only translates, does NOT compile or run anything
+// Usage:   ./cimplec program.cimp
+// Output:  program.cpp
+//
+// Compile this transpiler with:
+//     g++ cimplec.cpp -o cimplec -std=c++17
 
 #include <iostream>
 #include <fstream>
 #include <string>
 #include <vector>
 #include <sstream>
-#include <map>
 #include <algorithm>
-#include <cstdlib>
 
 using namespace std;
 
@@ -43,7 +45,6 @@ string replace_keywords(string s) {
     return s;
 }
 
-// Better print argument splitter (respects quotes)
 vector<string> split_print_args(const string& s) {
     vector<string> args;
     string current;
@@ -71,40 +72,39 @@ vector<string> split_print_args(const string& s) {
 }
 
 // ────────────────────────────────────────────────
-// Main program
+// Main logic — only translation
 // ────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
-    if (argc < 2) {
-        cerr << "Usage: cimplec <file.cimp> [--no-run]\n";
+    if (argc != 2) {
+        cerr << "Usage: ./cimplec <file.cimp>\n";
+        cerr << "   Writes output to <file>.cpp\n";
         return 1;
     }
 
     string input_path = argv[1];
-    bool should_run = true;
-    if (argc >= 3 && string(argv[2]) == "--no-run") {
-        should_run = false;
-    }
-
     ifstream in(input_path);
     if (!in.is_open()) {
-        cerr << "[ERROR] Cannot open: " << input_path << endl;
+        cerr << "[ERROR] Cannot open input file: " << input_path << endl;
         return 1;
     }
 
-    string base = input_path;
-    size_t dot = base.find_last_of('.');
-    if (dot != string::npos) base = base.substr(0, dot);
-    string cpp_out = base + ".cpp";
-    string exe_out = base;
+    string base_name = input_path;
+    size_t dot = base_name.find_last_of('.');
+    if (dot != string::npos) base_name = base_name.substr(0, dot);
 
-    ofstream out(cpp_out);
+    string output_path = base_name + ".cpp";
+
+    ofstream out(output_path);
     if (!out.is_open()) {
-        cerr << "[ERROR] Cannot create: " << cpp_out << endl;
+        cerr << "[ERROR] Cannot create output file: " << output_path << endl;
         return 1;
     }
 
-    out << "#include <iostream>\n#include <string>\nusing namespace std;\n\n";
+    // Header
+    out << "#include <iostream>\n";
+    out << "#include <string>\n";
+    out << "using namespace std;\n\n";
 
     vector<int> indent_stack = {0};
     int line_num = 0;
@@ -114,16 +114,15 @@ int main(int argc, char* argv[]) {
 
     while (getline(in, line)) {
         ++line_num;
-        string original = line;
         string trimmed = trim(line);
         if (trimmed.empty() || starts_with(trimmed, "//")) continue;
 
-        // Calculate current indentation level
-        size_t indent_len = line.find_first_not_of(" \t");
-        if (indent_len == string::npos) continue;
-        int this_indent = indent_len;
+        // Detect indentation level
+        size_t indent_pos = line.find_first_not_of(" \t");
+        if (indent_pos == string::npos) continue;
+        int this_indent = static_cast<int>(indent_pos);
 
-        // Dedent if necessary
+        // Auto-deduct when indentation decreases
         while (indent_stack.size() > 1 && this_indent < indent_stack.back()) {
             indent_stack.pop_back();
             out << string((indent_stack.size() - 1) * 4, ' ') << "}\n";
@@ -133,39 +132,40 @@ int main(int argc, char* argv[]) {
 
         trimmed = replace_keywords(trimmed);
 
-        // ── print(...) ──
+        // print(...)
         if (starts_with(trimmed, "print(")) {
             size_t start = trimmed.find('(') + 1;
             size_t end = trimmed.rfind(')');
-            if (end == string::npos || end <= start) {
-                cerr << "[Warning line " << line_num << "] Invalid print\n";
-                continue;
+            if (end > start) {
+                string args_part = trimmed.substr(start, end - start);
+                auto args = split_print_args(args_part);
+                out << indent_str << "cout";
+                for (const string& arg : args) {
+                    out << " << " << arg;
+                }
+                out << " << endl;\n";
             }
-            string args_str = trimmed.substr(start, end - start);
-            auto args = split_print_args(args_str);
-
-            out << indent_str << "cout";
-            for (const string& a : args) out << " << " << a;
-            out << " << endl;\n";
             continue;
         }
 
-        // ── cin(var) ──
+        // cin(...)
         if (starts_with(trimmed, "cin(")) {
             size_t start = trimmed.find('(') + 1;
             size_t end = trimmed.rfind(')');
-            string var = trim(trimmed.substr(start, end - start));
-            out << indent_str << "cin >> " << var << ";\n";
+            if (end > start) {
+                string var = trim(trimmed.substr(start, end - start));
+                out << indent_str << "cin >> " << var << ";\n";
+            }
             continue;
         }
 
-        // ── def name(param: type, ...) ──
+        // def name(param: type, ...)
         if (starts_with(trimmed, "def ")) {
             string sig = trim(trimmed.substr(4));
             size_t po = sig.find('('), pc = sig.rfind(')');
             if (po == string::npos || pc == string::npos) continue;
 
-            string name = trim(sig.substr(0, po));
+            string fname = trim(sig.substr(0, po));
             string params_str = trim(sig.substr(po + 1, pc - po - 1));
 
             vector<pair<string, string>> params;
@@ -175,32 +175,33 @@ int main(int argc, char* argv[]) {
                 while (getline(ss, token, ',')) {
                     token = trim(token);
                     size_t colon = token.find(':');
+                    string type = "string";
+                    string name = token;
                     if (colon != string::npos) {
-                        string t = trim(token.substr(0, colon));
-                        string n = trim(token.substr(colon + 1));
-                        if (t == "int" || t == "float" || t == "bool" || t == "double") {
-                            params.emplace_back(t, n);
-                        } else {
-                            params.emplace_back("string", n);
+                        type = trim(token.substr(0, colon));
+                        name = trim(token.substr(colon + 1));
+                        if (type != "int" && type != "float" && type != "double" && type != "bool") {
+                            type = "string";
                         }
-                    } else {
-                        params.emplace_back("string", trim(token));
                     }
+                    params.emplace_back(type, name);
                 }
             }
 
-            out << "void " << name << "(";
+            out << "void " << fname << "(";
             for (size_t i = 0; i < params.size(); ++i) {
                 if (i > 0) out << ", ";
                 out << params[i].first << " " << params[i].second;
             }
             out << ") {\n";
 
-            indent_stack.push_back(this_indent + 4); // assume next line indented
+            if (this_indent + 4 > indent_stack.back()) {
+                indent_stack.push_back(this_indent + 4);
+            }
             continue;
         }
 
-        // ── for var in range(...) ──
+        // for ... in range(...)
         if (starts_with(trimmed, "for ") && trimmed.find(" in range(") != string::npos) {
             size_t in_pos = trimmed.find(" in range(");
             string var = trim(trimmed.substr(4, in_pos - 4));
@@ -222,37 +223,48 @@ int main(int argc, char* argv[]) {
             out << indent_str << "for (int " << var << " = " << init << "; "
                 << var << " < " << limit << "; " << var << " += " << step << ") {\n";
 
-            indent_stack.push_back(this_indent + 4);
+            if (this_indent + 4 > indent_stack.back()) {
+                indent_stack.push_back(this_indent + 4);
+            }
             continue;
         }
 
-        // ── if / elif / else / while ──
+        // C-style for(...)
+        if (starts_with(trimmed, "for(") && ends_with(trimmed, ":")) {
+            string inside = trimmed.substr(4, trimmed.size() - 5);
+            replace(inside.begin(), inside.end(), ',', ';');
+            out << indent_str << "for(" << inside << ") {\n";
+
+            if (this_indent + 4 > indent_stack.back()) {
+                indent_stack.push_back(this_indent + 4);
+            }
+            continue;
+        }
+
+        // if / while / elif / else :
         if (ends_with(trimmed, ":")) {
-            string stmt = trim(trimmed.substr(0, trimmed.size() - 1));
-            string keyword = stmt.substr(0, stmt.find(' '));
-            string cond = trim(stmt.substr(keyword.size()));
+            string header = trim(trimmed.substr(0, trimmed.size() - 1));
+            size_t sp = header.find(' ');
+            string keyword = (sp != string::npos) ? header.substr(0, sp) : header;
+            string cond = (sp != string::npos) ? trim(header.substr(sp)) : "";
 
             if (keyword == "if" || keyword == "while") {
                 out << indent_str << keyword << " (" << cond << ") {\n";
-                indent_stack.push_back(this_indent + 4);
+                if (this_indent + 4 > indent_stack.back()) {
+                    indent_stack.push_back(this_indent + 4);
+                }
             }
             else if (keyword == "elif") {
-                // close previous block and open else if
-                if (indent_stack.size() > 1) {
-                    out << string((indent_stack.size() - 2) * 4, ' ') << "} else if (" << cond << ") {\n";
-                }
+                out << string((indent_stack.size() - 2) * 4, ' ') << "} else if (" << cond << ") {\n";
             }
             continue;
         }
 
         if (trimmed == "else") {
-            if (indent_stack.size() > 1) {
-                out << string((indent_stack.size() - 2) * 4, ' ') << "} else {\n";
-            }
+            out << string((indent_stack.size() - 2) * 4, ' ') << "} else {\n";
             continue;
         }
 
-        // ── end (optional now) ──
         if (trimmed == "end") {
             if (indent_stack.size() > 1) {
                 indent_stack.pop_back();
@@ -261,20 +273,23 @@ int main(int argc, char* argv[]) {
             continue;
         }
 
-        // ── declarations / assignments / expressions ──
+        // Everything else: variables, assignments, expressions, function calls...
         if (!trimmed.empty()) {
-            bool is_decl = starts_with(trimmed, "int ") || starts_with(trimmed, "float ") ||
-                           starts_with(trimmed, "double ") || starts_with(trimmed, "bool ") ||
-                           starts_with(trimmed, "string ");
             out << indent_str << trimmed;
+            // Add semicolon when it looks like a statement
             if (trimmed.back() != ';' && trimmed.back() != '{' && trimmed.back() != '}') {
-                out << ";";
+                if (trimmed.find('=') != string::npos ||
+                    trimmed.find("++") != string::npos ||
+                    trimmed.find("--") != string::npos ||
+                    trimmed.find('(') != string::npos) {
+                    out << ";";
+                }
             }
             out << "\n";
         }
     }
 
-    // Close all remaining blocks
+    // Close remaining open blocks
     while (indent_stack.size() > 1) {
         indent_stack.pop_back();
         out << string((indent_stack.size() - 1) * 4, ' ') << "}\n";
@@ -285,9 +300,7 @@ int main(int argc, char* argv[]) {
     out.close();
     in.close();
 
-    cout << "[OK] Generated → " << cpp_out << endl;
-
-    // Finished: emitted C++ source only (no compilation performed).
+    cout << "[OK]  Written to:  " << output_path << endl;
 
     return 0;
 }
