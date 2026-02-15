@@ -1,0 +1,20 @@
+# ninja log v7
+8	73	7928846482101709	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/parser/expression_parser.cpp.obj	86bdb8919aa34cea
+12	78	7928846482148598	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/parser/statement_parser.cpp.obj	46677158460bd0e5
+11	79	7928846482125615	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/parser/python_indent_handler.cpp.obj	69b79e3e4830ab42
+19	566	7928846482210648	tools/cimple_cli/CMakeFiles/cimple.dir/lex_parse_driver.cpp.obj	29a3cc452c651e28
+16	823	7928846482168702	tools/cimple_cli/CMakeFiles/cimple.dir/cimplec.cpp.obj	e1d2549ca367dd70
+17	1084	7928846482190647	tools/cimple_cli/CMakeFiles/cimple.dir/cli_commands.cpp.obj	582444ca0cd990a7
+20	1095	7928846482228711	tools/cimple_cli/CMakeFiles/cimple.dir/main.cpp.obj	63b89d079e9e993c
+16	471	7928848104354184	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/lexer/token_stream.cpp.obj	b3196b206599beea
+14	504	7928848104336789	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/lexer/token.cpp.obj	2b6f991ec241ee3a
+12	744	7928848104306104	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/lexer/lexer.cpp.obj	b871092a35f7c3c9
+19	781	7928848104389643	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/semantic/type_infer.cpp.obj	45e500de932f4d3d
+9	1017	7928848104262874	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/eval/evaluator.cpp.obj	f9e195255fcdf570
+6	1058	7928848422797672	tools/cimple_cli/CMakeFiles/cimple.dir/__/__/src/frontend/parser/parser.cpp.obj	c31c5acc209dae6b
+2	123	7928849421323229	build.ninja	8797016b5cb65f95
+2	123	7928849421323229	D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/cmake_install.cmake	8797016b5cb65f95
+2	123	7928849421323229	D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/runtime_lib/cmake_install.cmake	8797016b5cb65f95
+2	123	7928849421323229	D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/tools/cimple_cli/cmake_install.cmake	8797016b5cb65f95
+5	262	7928849608413802	tools/cimple_cli/CMakeFiles/cimple.dir/main.cpp.obj	63b89d079e9e993c
+263	387	7928849610983649	tools/cimple_cli/cimple.exe	73fa69127968329c

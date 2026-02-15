@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/cmake_install.cmake",
+		"D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/runtime_lib/cmake_install.cmake",
+		"D:/Cimple_Industries/Cimple/CIMPLE_compiler/build/tools/cimple_cli/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
