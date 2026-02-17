@@ -1,6 +1,7 @@
 #pragma once
 #include "../parser/parser.h"
 #include "../semantic/type_infer.h"
+#include "../semantic/cimple_var.h"
 #include <string>
 #include <optional>
 #include <unordered_map>
@@ -8,6 +9,8 @@
 namespace cimple {
 namespace eval {
 
+// Legacy Value struct - kept for backward compatibility
+// New code should use semantic::CimpleVar for RAII semantics
 struct Value {
     enum Kind { Unknown, Int, Float, String } kind = Unknown;
     long long i = 0;
@@ -15,10 +18,15 @@ struct Value {
     std::string s;
 
     std::string to_string() const;
+    
+    // Conversion helpers to/from CimpleVar
+    static Value from_cimple_var(const semantic::CimpleVar& var);
+    semantic::CimpleVar to_cimple_var() const;
 };
 
 // environment mapping variable name -> value
-using ValueEnv = std::unordered_map<std::string, Value>;
+// Using CimpleVar for RAII semantics - automatic cleanup on reassignment
+using ValueEnv = std::unordered_map<std::string, semantic::CimpleVar>;
 
 // evaluate an expression given a type env, value env, and function table; returns optional value
 std::optional<Value> evaluate_expr(const parser::Expr* expr, const semantic::TypeEnv& tenv, ValueEnv& venv,

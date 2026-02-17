@@ -1,3 +1,3 @@
 # Cimple Syntax
 
-Cimple uses Python-compatible syntax. Update parser and lexer to follow Python grammar.
+Cimple uses the same syntax as Python. Update parser and lexer to follow Python grammar.

@@ -38,7 +38,7 @@ program.dylib
 ```
 
 ## 3. Syntax Model — Pure Python Syntax
-Cimple uses Python-compatible syntax. Example:
+Cimple uses the same syntax as Python. Example:
 ```cimple
 def add(a, b):
     return a + b

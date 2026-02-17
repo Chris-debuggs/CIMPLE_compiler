@@ -1,3 +1,6 @@
+// parser.cpp - Recursive descent parser
+// TODO: Align with Python's official PEG grammar (python.gram)
+// See docs/PEG_GRAMMAR_PLAN.md for implementation plan
 #include "frontend/parser/parser.h"
 #include "frontend/lexer/token_utils.h"
 #include <iostream>
