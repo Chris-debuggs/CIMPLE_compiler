@@ -1,0 +1,8 @@
+# Test 1: Arithmetic
+# Tests: integer literals, assignment, addition, subtraction, multiplication, division, print
+x = 10
+y = 3
+print(x + y)
+print(x - y)
+print(x * y)
+print(x / y)

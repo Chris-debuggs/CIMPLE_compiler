@@ -1,0 +1,11 @@
+# Test 2: Function call
+# Tests: def, parameters, return, function call, print
+def add(a, b)
+    return a + b
+
+def greet(name)
+    print(name)
+
+result = add(5, 7)
+print(result)
+greet("hello")

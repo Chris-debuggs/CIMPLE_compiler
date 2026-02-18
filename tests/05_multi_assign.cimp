@@ -1,0 +1,12 @@
+# Test 5: Multiple assignments and expression reuse
+# Tests: variable reassignment, multi-step computation
+x = 1
+y = x + 1
+z = y + 1
+w = x + y + z
+print(w)
+
+a = 100
+b = a * 2
+c = b - a
+print(c)
