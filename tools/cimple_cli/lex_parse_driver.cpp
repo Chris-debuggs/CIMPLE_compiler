@@ -1,9 +1,9 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include "../../include/frontend/lexer/lexer.h"
-#include "../../include/frontend/lexer/token_utils.h"
-#include "../../include/frontend/parser/parser.h"
+#include "frontend/lexer/lexer.h"
+#include "frontend/lexer/token_utils.h"
+#include "frontend/parser/parser.h"
 
 int lex_and_parse_file(const std::string& path) {
     std::ifstream in(path);

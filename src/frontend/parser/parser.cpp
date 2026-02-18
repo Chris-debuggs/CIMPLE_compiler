@@ -73,8 +73,11 @@ std::unique_ptr<Stmt> Parser::parse_simple_statement() {
     auto t = ts.peek();
     if (t.type == lexer::TokenType::NEWLINE) { ts.next(); return nullptr; }
     if (t.type == lexer::TokenType::ENDMARKER) return nullptr;
+    // Skip bare INDENT/DEDENT tokens at statement level (can appear in top-level code)
+    if (t.type == lexer::TokenType::INDENT || t.type == lexer::TokenType::DEDENT) { ts.next(); return nullptr; }
 
     auto expr = parse_expression();
+    if (!expr) return nullptr;  // parse_factor returned nullptr for unrecognized token
     if (ts.peek().type == lexer::TokenType::OP && ts.peek().lexeme == "=") {
         if (auto var = dynamic_cast<VarRef*>(expr.get())) {
             ts.next(); // consume '='
@@ -129,8 +132,8 @@ std::unique_ptr<Expr> Parser::parse_factor() {
         if (ts.peek().type == lexer::TokenType::OP && ts.peek().lexeme == ")") ts.next();
         return e;
     }
-    ts.next();
-    return std::make_unique<VarRef>(std::string("<unknown>"));
+    // Unknown token — do NOT consume it, return nullptr so callers can handle it
+    return nullptr;
 }
 
 std::vector<std::unique_ptr<Expr>> Parser::parse_arglist() {

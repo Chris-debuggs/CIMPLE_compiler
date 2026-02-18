@@ -108,6 +108,47 @@ void handle_build(const std::string& path) {
 
 // Old emit_and_link_with_clang function removed - replaced with LLVM backend codegen
 
+void handle_run(const std::string& path) {
+	std::ifstream in(path);
+	if (!in.is_open()) {
+		std::cerr << "[cimple] Cannot open file: " << path << std::endl;
+		return;
+	}
+	std::ostringstream buf;
+	buf << in.rdbuf();
+	std::string source = buf.str();
+
+	auto tokens = cimple::lexer::lex(source);
+	cimple::parser::Parser p(tokens);
+	auto module = p.parse_module();
+
+	auto env = cimple::semantic::infer_types(module);
+
+	// Build function table for evaluator
+	std::unordered_map<std::string, cimple::parser::FuncDef*> functions;
+	for (auto& stmt : module.body) {
+		if (auto fn = dynamic_cast<cimple::parser::FuncDef*>(stmt.get())) {
+			functions[fn->name] = fn;
+		}
+	}
+
+	// Execute top-level statements
+	cimple::eval::ValueEnv venv;
+	for (auto& stmt : module.body) {
+		cimple::eval::evaluate_stmt(stmt.get(), env, venv, functions);
+	}
+}
+
+void handle_cli(int argc, char** argv) {
+	if (argc < 2) {
+		std::cout << "Usage: cimple <command> <file.cimp>\n";
+		std::cout << "Commands:\n";
+		std::cout << "  build <file>     Compile to native binary (requires LLVM)\n";
+		std::cout << "  run <file>       Run via interpreter (no LLVM needed)\n";
+		std::cout << "  lexparse <file>  Debug: lex and parse only\n";
+		return;
+	}
+
 	std::string cmd = argv[1];
 	if (cmd == "build") {
 		if (argc < 3) {
@@ -115,6 +156,12 @@ void handle_build(const std::string& path) {
 			return;
 		}
 		handle_build(argv[2]);
+	} else if (cmd == "run") {
+		if (argc < 3) {
+			std::cout << "Usage: cimple run <file.cimp>\n";
+			return;
+		}
+		handle_run(argv[2]);
 	} else if (cmd == "lexparse" || cmd == "debug-lexparse") {
 		if (argc < 3) {
 			std::cout << "Usage: cimple lexparse <file.cimp>\n";

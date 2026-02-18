@@ -173,3 +173,28 @@ std::vector<Token> cimple::lexer::lex_from_view(std::string_view source) {
 	out.push_back({TokenType::ENDMARKER, "", {lineno + 1, 1}});
 	return out;
 }
+
+// Token helper functions (defined here since token.cpp is not included in the build)
+std::string cimple::lexer::token_type_to_string(TokenType t) {
+	switch (t) {
+		case TokenType::INDENT:    return "INDENT";
+		case TokenType::DEDENT:    return "DEDENT";
+		case TokenType::NEWLINE:   return "NEWLINE";
+		case TokenType::ENDMARKER: return "ENDMARKER";
+		case TokenType::IDENT:     return "IDENT";
+		case TokenType::NUMBER:    return "NUMBER";
+		case TokenType::STRING:    return "STRING";
+		case TokenType::OP:        return "OP";
+		case TokenType::KEYWORD:   return "KEYWORD";
+		case TokenType::COMMENT:   return "COMMENT";
+	}
+	return "<unknown>";
+}
+
+std::string cimple::lexer::token_to_string(const Token& tok) {
+	std::ostringstream ss;
+	ss << token_type_to_string(tok.type) << " ";
+	if (!tok.lexeme.empty()) ss << "('" << tok.lexeme << "') ";
+	ss << "@" << tok.loc.line << ":" << tok.loc.column;
+	return ss.str();
+}

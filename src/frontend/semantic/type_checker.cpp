@@ -5,8 +5,7 @@
 using namespace cimple;
 using namespace cimple::semantic;
 
-TypeChecker::TypeChecker(const parser::Module& module, const TypeEnv& type_env)
-    : module_(module), type_env_(type_env) {}
+// Constructor is defined inline in type_checker.h
 
 void TypeChecker::check() {
     errors_.clear();
@@ -239,8 +238,14 @@ lexer::SourceLocation TypeChecker::get_location(const parser::Node* node) {
     return {0, 0};
 }
 
+namespace cimple {
+namespace semantic {
+
 bool check_types(const parser::Module& module, const TypeEnv& type_env, std::vector<std::string>& errors) {
     TypeChecker checker(module, type_env);
     errors = checker.get_errors();
     return errors.empty();
 }
+
+} // namespace semantic
+} // namespace cimple

@@ -5,6 +5,7 @@
 #include <vector>
 #include <memory>
 #include <cstdint>
+#include <stdexcept>
 
 namespace cimple {
 namespace semantic {
