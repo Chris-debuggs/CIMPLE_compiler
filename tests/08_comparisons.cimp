@@ -1,0 +1,8 @@
+# Test 8: comparisons and boolean logic
+x = 10
+y = 3
+print(x == 10)
+print(x != y)
+print(x > y)
+print(x < y)
+print(not x < y)
