@@ -1,0 +1,7 @@
+# Test 15: function-local scope shadowing global
+x = 10
+def show():
+    x = 20
+    print(x)
+show()
+print(x)

@@ -1,6 +1,7 @@
 #pragma once
 #include "../parser/parser.h"
 #include "../semantic/cimple_var.h"
+#include "../semantic/scope_stack.h"
 #include "../semantic/type_infer.h"
 #include <optional>
 #include <string>
@@ -24,21 +25,20 @@ struct Value {
   semantic::CimpleVar to_cimple_var() const;
 };
 
-// Environment: variable name → runtime value.
-// Using CimpleVar for RAII semantics (automatic cleanup on reassignment).
-using ValueEnv = std::unordered_map<std::string, semantic::CimpleVar>;
+// Scoped runtime environment.
+using ValueEnv = semantic::ScopeStack<semantic::CimpleVar>;
 
 // ---------------------------------------------------------------------------
-// StmtResult — structured control-flow signal from statement evaluation.
+// StmtResult: structured control-flow signal from statement evaluation.
 //
 // Every statement returns one of four outcomes:
-//   Normal   – execution continues normally
-//   Return   – a `return` was hit; carries the returned value (or nullopt)
-//   Break    – a `break` was hit inside a loop
-//   Continue – a `continue` was hit inside a loop
+//   Normal   - execution continues normally
+//   Return   - a `return` was hit; carries the returned value (or nullopt)
+//   Break    - a `break` was hit inside a loop
+//   Continue - a `continue` was hit inside a loop
 //
 // The while-loop evaluator catches Break and Continue.
-// Everything else just propagates them upward unchanged (like Return).
+// Everything else propagates them upward unchanged (like Return).
 // ---------------------------------------------------------------------------
 struct StmtResult {
   enum Kind { Normal, Return, Break, Continue } kind = Normal;

@@ -1,0 +1,6 @@
+# Test 14: block scope shadowing
+x = 1
+if True:
+    x = 2
+    print(x)
+print(x)

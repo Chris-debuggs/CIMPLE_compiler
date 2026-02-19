@@ -1,9 +1,29 @@
 #include "frontend/eval/evaluator.h"
 #include <cmath>
 #include <iostream>
+#include <vector>
 
 using namespace cimple;
 using namespace cimple::eval;
+
+namespace {
+
+class ScopeGuard {
+public:
+  ScopeGuard(ValueEnv &env, ValueEnv::ScopeKind kind) : env_(env) {
+    env_.push_scope(kind);
+  }
+
+  ~ScopeGuard() { env_.pop_scope(); }
+
+  ScopeGuard(const ScopeGuard &) = delete;
+  ScopeGuard &operator=(const ScopeGuard &) = delete;
+
+private:
+  ValueEnv &env_;
+};
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Value helpers
@@ -78,18 +98,21 @@ static Value make_int(long long v) {
   x.i = v;
   return x;
 }
+
 static Value make_float(double v) {
   Value x;
   x.kind = Value::Float;
   x.f = v;
   return x;
 }
+
 static Value make_string(const std::string &s) {
   Value x;
   x.kind = Value::String;
   x.s = s;
   return x;
 }
+
 static Value make_bool(bool v) {
   Value x;
   x.kind = Value::Bool;
@@ -107,12 +130,15 @@ std::optional<Value> cimple::eval::evaluate_expr(
   if (!expr)
     return std::nullopt;
 
+  (void)tenv;
+
   // --- Literals ---
   if (auto n = dynamic_cast<const parser::NumberLiteral *>(expr)) {
     if (n->value.find('.') != std::string::npos)
       return make_float(std::stod(n->value));
     return make_int(std::stoll(n->value));
   }
+
   if (auto s = dynamic_cast<const parser::StringLiteral *>(expr)) {
     // Strip surrounding quotes from the lexer's raw string token
     std::string raw = s->value;
@@ -120,15 +146,16 @@ std::optional<Value> cimple::eval::evaluate_expr(
       raw = raw.substr(1, raw.size() - 2);
     return make_string(raw);
   }
+
   if (auto bl = dynamic_cast<const parser::BoolLiteral *>(expr)) {
     return make_bool(bl->value);
   }
 
   // --- Variable reference ---
   if (auto v = dynamic_cast<const parser::VarRef *>(expr)) {
-    auto it = venv.find(v->name);
-    if (it != venv.end())
-      return Value::from_cimple_var(it->second);
+    if (const auto *found = venv.lookup(v->name)) {
+      return Value::from_cimple_var(*found);
+    }
     return std::nullopt;
   }
 
@@ -137,28 +164,27 @@ std::optional<Value> cimple::eval::evaluate_expr(
     auto operand = evaluate_expr(u->operand.get(), tenv, venv, functions);
     if (!operand)
       return std::nullopt;
+
     if (u->op == "not")
       return make_bool(!is_truthy(*operand));
+
     if (u->op == "-") {
       if (operand->kind == Value::Int)
         return make_int(-operand->i);
       if (operand->kind == Value::Float)
         return make_float(-operand->f);
     }
+
     return std::nullopt;
   }
 
   // --- Logical operators (and / or) with short-circuit evaluation ---
-  // These are distinct from BinaryOp: the RHS may never be evaluated.
-  // Both always return a Bool result (truthiness semantics).
   if (auto lg = dynamic_cast<const parser::LogicalExpr *>(expr)) {
-    // Evaluate left operand unconditionally
     auto left = evaluate_expr(lg->left.get(), tenv, venv, functions);
     if (!left)
       return std::nullopt;
 
     if (lg->op == "and") {
-      // Short-circuit: if left is falsy, skip right entirely
       if (!is_truthy(*left))
         return make_bool(false);
       auto right = evaluate_expr(lg->right.get(), tenv, venv, functions);
@@ -168,7 +194,6 @@ std::optional<Value> cimple::eval::evaluate_expr(
     }
 
     if (lg->op == "or") {
-      // Short-circuit: if left is truthy, skip right entirely
       if (is_truthy(*left))
         return make_bool(true);
       auto right = evaluate_expr(lg->right.get(), tenv, venv, functions);
@@ -187,17 +212,17 @@ std::optional<Value> cimple::eval::evaluate_expr(
     if (!L || !R)
       return std::nullopt;
 
-    // Comparison operators — work on numbers and strings
     auto is_cmp = [](const std::string &op) {
       return op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" ||
              op == ">=";
     };
+
     if (is_cmp(b->op)) {
       // Numeric comparison
       if ((L->kind == Value::Int || L->kind == Value::Float) &&
           (R->kind == Value::Int || R->kind == Value::Float)) {
-        double lv = (L->kind == Value::Int) ? (double)L->i : L->f;
-        double rv = (R->kind == Value::Int) ? (double)R->i : R->f;
+        const double lv = (L->kind == Value::Int) ? static_cast<double>(L->i) : L->f;
+        const double rv = (R->kind == Value::Int) ? static_cast<double>(R->i) : R->f;
         if (b->op == "==")
           return make_bool(lv == rv);
         if (b->op == "!=")
@@ -211,6 +236,7 @@ std::optional<Value> cimple::eval::evaluate_expr(
         if (b->op == ">=")
           return make_bool(lv >= rv);
       }
+
       // String comparison
       if (L->kind == Value::String && R->kind == Value::String) {
         if (b->op == "==")
@@ -226,6 +252,7 @@ std::optional<Value> cimple::eval::evaluate_expr(
         if (b->op == ">=")
           return make_bool(L->s >= R->s);
       }
+
       // Bool equality
       if (L->kind == Value::Bool && R->kind == Value::Bool) {
         if (b->op == "==")
@@ -233,16 +260,17 @@ std::optional<Value> cimple::eval::evaluate_expr(
         if (b->op == "!=")
           return make_bool(L->b != R->b);
       }
+
       return std::nullopt;
     }
 
     // Arithmetic operators
     if ((L->kind == Value::Int || L->kind == Value::Float) &&
         (R->kind == Value::Int || R->kind == Value::Float)) {
-      // Preserve int if both operands are int and result is exact
-      bool both_int = (L->kind == Value::Int && R->kind == Value::Int);
+      const bool both_int = (L->kind == Value::Int && R->kind == Value::Int);
       if (both_int) {
-        long long lv = L->i, rv = R->i;
+        const long long lv = L->i;
+        const long long rv = R->i;
         if (b->op == "+")
           return make_int(lv + rv);
         if (b->op == "-")
@@ -257,11 +285,11 @@ std::optional<Value> cimple::eval::evaluate_expr(
           // Integer division if evenly divisible, else float
           if (lv % rv == 0)
             return make_int(lv / rv);
-          return make_float((double)lv / (double)rv);
+          return make_float(static_cast<double>(lv) / static_cast<double>(rv));
         }
       } else {
-        double lv = (L->kind == Value::Int) ? (double)L->i : L->f;
-        double rv = (R->kind == Value::Int) ? (double)R->i : R->f;
+        const double lv = (L->kind == Value::Int) ? static_cast<double>(L->i) : L->f;
+        const double rv = (R->kind == Value::Int) ? static_cast<double>(R->i) : R->f;
         if (b->op == "+")
           return make_float(lv + rv);
         if (b->op == "-")
@@ -277,6 +305,7 @@ std::optional<Value> cimple::eval::evaluate_expr(
         }
       }
     }
+
     // String concatenation
     if (b->op == "+" && L->kind == Value::String && R->kind == Value::String)
       return make_string(L->s + R->s);
@@ -302,25 +331,41 @@ std::optional<Value> cimple::eval::evaluate_expr(
       auto it = functions.find(callee->name);
       if (it != functions.end() && it->second) {
         parser::FuncDef *fn = it->second;
-        ValueEnv local_venv;
-        size_t nparams = fn->params.size();
-        for (size_t i = 0; i < nparams && i < c->args.size(); ++i) {
-          auto aval = evaluate_expr(c->args[i].get(), tenv, venv, functions);
-          if (aval)
-            local_venv[fn->params[i]] = aval->to_cimple_var();
+
+        std::vector<Value> arg_values;
+        arg_values.reserve(c->args.size());
+        for (const auto &arg : c->args) {
+          auto aval = evaluate_expr(arg.get(), tenv, venv, functions);
+          if (!aval) {
+            return std::nullopt;
+          }
+          arg_values.push_back(*aval);
         }
-        semantic::TypeEnv local_tenv;
+
+        ScopeGuard function_scope(venv, ValueEnv::ScopeKind::Function);
+
+        const std::size_t nparams = fn->params.size();
+        for (std::size_t i = 0; i < nparams && i < arg_values.size(); ++i) {
+          venv.set_local(fn->params[i], arg_values[i].to_cimple_var());
+        }
+
         for (auto &bs : fn->body) {
-          auto res = cimple::eval::evaluate_stmt(bs.get(), local_tenv,
-                                                 local_venv, functions);
+          auto res = cimple::eval::evaluate_stmt(bs.get(), tenv, venv, functions);
           if (res.is_return())
-            return res.value; // unwrap Value from StmtResult::Return
-          // Break/Continue can't escape a function call — treat as error/ignore
+            return res.value;
+
+          // break/continue cannot escape a function call
+          if (res.is_break() || res.is_continue()) {
+            std::cerr << "Invalid control flow: break/continue escaped function\n";
+            return std::nullopt;
+          }
         }
+
         return std::nullopt;
       }
     }
   }
+
   return std::nullopt;
 }
 
@@ -338,7 +383,7 @@ StmtResult cimple::eval::evaluate_stmt(
   if (auto as = dynamic_cast<const parser::AssignStmt *>(stmt)) {
     auto v = evaluate_expr(as->value.get(), tenv, venv, functions);
     if (v)
-      venv[as->target] = v->to_cimple_var();
+      venv.set_local(as->target, v->to_cimple_var());
     return StmtResult::normal();
   }
 
@@ -373,49 +418,53 @@ StmtResult cimple::eval::evaluate_stmt(
       if (!branch.condition) {
         take = true; // else branch
       } else {
-        auto cond =
-            evaluate_expr(branch.condition.get(), tenv, venv, functions);
+        auto cond = evaluate_expr(branch.condition.get(), tenv, venv, functions);
         take = cond && is_truthy(*cond);
       }
+
       if (take) {
+        ScopeGuard branch_scope(venv, ValueEnv::ScopeKind::Block);
         for (auto &s : branch.body) {
           auto res = evaluate_stmt(s.get(), tenv, venv, functions);
           if (!res.is_normal())
-            return res; // propagate Return, Break, Continue
+            return res;
         }
-        break; // only execute the first matching branch
+        break;
       }
     }
     return StmtResult::normal();
   }
 
   // --- while ---
-  // This is the ONLY place that catches Break and Continue.
+  // This is the only place that catches Break and Continue.
   // Return still propagates upward.
   if (auto ws = dynamic_cast<const parser::WhileStmt *>(stmt)) {
+    ScopeGuard loop_scope(venv, ValueEnv::ScopeKind::Block);
+
     while (true) {
-      // Evaluate condition — exits loop if falsy
       auto cond = evaluate_expr(ws->condition.get(), tenv, venv, functions);
       if (!cond || !is_truthy(*cond))
         break;
 
-      // Execute loop body
       bool did_break = false;
       for (auto &s : ws->body) {
         auto res = evaluate_stmt(s.get(), tenv, venv, functions);
         if (res.is_break()) {
           did_break = true;
-          break; // break exits the body loop
+          break;
         }
         if (res.is_continue()) {
-          break; // continue skips rest of body, re-checks condition
+          break;
         }
-        if (res.is_return())
-          return res; // propagate return upward (out of while)
+        if (res.is_return()) {
+          return res;
+        }
       }
+
       if (did_break)
-        break; // break exits the while loop itself
+        break;
     }
+
     return StmtResult::normal();
   }
 

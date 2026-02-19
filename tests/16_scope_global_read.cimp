@@ -1,0 +1,5 @@
+# Test 16: function can read global scope
+g = 7
+def show():
+    print(g)
+show()

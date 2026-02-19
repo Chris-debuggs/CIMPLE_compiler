@@ -5,246 +5,380 @@
 using namespace cimple;
 using namespace cimple::semantic;
 
-// Constructor is defined inline in type_checker.h
+namespace {
+
+static bool is_numeric(TypeKind t) {
+  return t == TypeKind::Int || t == TypeKind::Float;
+}
+
+static bool is_truthy_compatible(TypeKind t) {
+  return t == TypeKind::Unknown || t == TypeKind::Bool || t == TypeKind::Int ||
+         t == TypeKind::Float || t == TypeKind::String;
+}
+
+static bool is_comparison_op(const std::string &op) {
+  return op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" ||
+         op == ">=";
+}
+
+static TypeKind merge_assignment_type(TypeKind existing, TypeKind incoming) {
+  if (existing == TypeKind::Unknown)
+    return incoming;
+  if (incoming == TypeKind::Unknown)
+    return existing;
+  if ((existing == TypeKind::Int && incoming == TypeKind::Float) ||
+      (existing == TypeKind::Float && incoming == TypeKind::Int)) {
+    return TypeKind::Float;
+  }
+  return incoming;
+}
+
+} // namespace
+
+void TypeChecker::add_error(const std::string &msg, lexer::SourceLocation loc) {
+  if (loc.line > 0 && loc.column > 0) {
+    std::ostringstream os;
+    os << msg << " (at " << loc.line << ":" << loc.column << ")";
+    errors_.push_back(os.str());
+  } else {
+    errors_.push_back(msg);
+  }
+}
 
 void TypeChecker::check() {
-    errors_.clear();
-    
-    // Check all top-level statements
-    for (const auto& stmt : module_.body) {
-        if (stmt) {
-            check_stmt(stmt.get(), type_env_);
-        }
-    }
-    
-    // If errors found, throw exception
-    if (!errors_.empty()) {
-        std::ostringstream msg;
-        msg << "Type checking failed with " << errors_.size() << " error(s)";
-        throw TypeCheckError(msg.str());
-    }
+  errors_ = get_errors();
+
+  if (!errors_.empty()) {
+    std::ostringstream msg;
+    msg << "Type checking failed with " << errors_.size() << " error(s)";
+    throw TypeCheckError(msg.str());
+  }
 }
 
 std::vector<std::string> TypeChecker::get_errors() {
-    errors_.clear();
-    
-    // Check all top-level statements
-    for (const auto& stmt : module_.body) {
-        if (stmt) {
-            try {
-                check_stmt(stmt.get(), type_env_);
-            } catch (const TypeCheckError& e) {
-                errors_.push_back(e.what());
-            }
-        }
+  errors_.clear();
+
+  ScopedTypeEnv env;
+  for (const auto &kv : type_env_.vars) {
+    env.set_global(kv.first, kv.second);
+  }
+
+  for (const auto &stmt : module_.body) {
+    if (stmt) {
+      check_stmt(stmt.get(), env, false);
     }
-    
-    return errors_;
+  }
+
+  return errors_;
 }
 
-void TypeChecker::check_stmt(const parser::Stmt* stmt, const TypeEnv& local_env) {
-    if (!stmt) return;
+void TypeChecker::check_stmt(const parser::Stmt *stmt, ScopedTypeEnv &local_env,
+                             bool in_loop) {
+  if (!stmt)
+    return;
 
-    if (auto assign = dynamic_cast<const parser::AssignStmt*>(stmt)) {
-        check_assignment(assign, local_env);
+  if (auto assign = dynamic_cast<const parser::AssignStmt *>(stmt)) {
+    check_assignment(assign, local_env);
+    return;
+  }
+
+  if (auto expr_stmt = dynamic_cast<const parser::ExprStmt *>(stmt)) {
+    check_expr(expr_stmt->expr.get(), local_env);
+    return;
+  }
+
+  if (auto ret = dynamic_cast<const parser::ReturnStmt *>(stmt)) {
+    check_expr(ret->value.get(), local_env);
+    return;
+  }
+
+  if (dynamic_cast<const parser::BreakStmt *>(stmt)) {
+    if (!in_loop) {
+      add_error("'break' used outside of loop", get_location(stmt));
     }
-    else if (auto expr_stmt = dynamic_cast<const parser::ExprStmt*>(stmt)) {
-        // Expression statements are checked for their expression
-        check_expr(expr_stmt->expr.get(), local_env);
+    return;
+  }
+
+  if (dynamic_cast<const parser::ContinueStmt *>(stmt)) {
+    if (!in_loop) {
+      add_error("'continue' used outside of loop", get_location(stmt));
     }
-    else if (auto ret = dynamic_cast<const parser::ReturnStmt*>(stmt)) {
-        // Return statement - check expression type
-        check_expr(ret->value.get(), local_env);
+    return;
+  }
+
+  if (auto func_def = dynamic_cast<const parser::FuncDef *>(stmt)) {
+    local_env.push_scope(ScopedTypeEnv::ScopeKind::Function);
+
+    for (const auto &param : func_def->params) {
+      local_env.set_local(param, TypeKind::Unknown);
     }
-    else if (auto func_def = dynamic_cast<const parser::FuncDef*>(stmt)) {
-        // Function definition - create local environment with parameters
-        TypeEnv func_env = local_env;
-        for (const auto& param : func_def->params) {
-            // Parameters start as Unknown, will be inferred from usage
-            func_env.vars[param] = TypeKind::Unknown;
+
+    for (const auto &body_stmt : func_def->body) {
+      if (body_stmt) {
+        check_stmt(body_stmt.get(), local_env, false);
+      }
+    }
+
+    local_env.pop_scope();
+    return;
+  }
+
+  if (auto if_stmt = dynamic_cast<const parser::IfStmt *>(stmt)) {
+    for (const auto &branch : if_stmt->branches) {
+      if (branch.condition) {
+        TypeKind cond = check_expr(branch.condition.get(), local_env);
+        if (!is_truthy_compatible(cond)) {
+          add_error("if-condition is not truthy-compatible",
+                    get_location(branch.condition.get()));
         }
-        
-        // Check function body
-        for (const auto& body_stmt : func_def->body) {
-            if (body_stmt) {
-                check_stmt(body_stmt.get(), func_env);
-            }
+      }
+
+      local_env.push_scope(ScopedTypeEnv::ScopeKind::Block);
+      for (const auto &body_stmt : branch.body) {
+        if (body_stmt) {
+          check_stmt(body_stmt.get(), local_env, in_loop);
         }
+      }
+      local_env.pop_scope();
     }
+    return;
+  }
+
+  if (auto while_stmt = dynamic_cast<const parser::WhileStmt *>(stmt)) {
+    TypeKind cond = check_expr(while_stmt->condition.get(), local_env);
+    if (!is_truthy_compatible(cond)) {
+      add_error("while-condition is not truthy-compatible",
+                get_location(while_stmt->condition.get()));
+    }
+
+    local_env.push_scope(ScopedTypeEnv::ScopeKind::Block);
+    for (const auto &body_stmt : while_stmt->body) {
+      if (body_stmt) {
+        check_stmt(body_stmt.get(), local_env, true);
+      }
+    }
+    local_env.pop_scope();
+    return;
+  }
 }
 
-TypeKind TypeChecker::check_expr(const parser::Expr* expr, const TypeEnv& local_env) {
-    if (!expr) return TypeKind::Unknown;
-
-    if (auto num = dynamic_cast<const parser::NumberLiteral*>(expr)) {
-        return (num->value.find('.') != std::string::npos) ? TypeKind::Float : TypeKind::Int;
-    }
-    
-    if (auto str = dynamic_cast<const parser::StringLiteral*>(expr)) {
-        return TypeKind::String;
-    }
-    
-    if (auto var_ref = dynamic_cast<const parser::VarRef*>(expr)) {
-        // Look up variable type
-        auto it = local_env.vars.find(var_ref->name);
-        if (it != local_env.vars.end()) {
-            return it->second;
-        }
-        // Check global env
-        auto global_it = type_env_.vars.find(var_ref->name);
-        if (global_it != type_env_.vars.end()) {
-            return global_it->second;
-        }
-        // Variable not found - this is a semantic error, but we'll return Unknown for now
-        return TypeKind::Unknown;
-    }
-    
-    if (auto bin_op = dynamic_cast<const parser::BinaryOp*>(expr)) {
-        TypeKind left_type = check_expr(bin_op->left.get(), local_env);
-        TypeKind right_type = check_expr(bin_op->right.get(), local_env);
-        
-        // Check binary operation compatibility
-        check_binary_op(bin_op, left_type, right_type, get_location(bin_op));
-        
-        // Return result type
-        if (bin_op->op == "+" && left_type == TypeKind::String && right_type == TypeKind::String) {
-            return TypeKind::String;
-        }
-        // Numeric operations
-        if ((left_type == TypeKind::Int || left_type == TypeKind::Float) &&
-            (right_type == TypeKind::Int || right_type == TypeKind::Float)) {
-            // Promote to float if either operand is float
-            return (left_type == TypeKind::Float || right_type == TypeKind::Float) 
-                ? TypeKind::Float : TypeKind::Int;
-        }
-        return TypeKind::Unknown;
-    }
-    
-    if (auto call = dynamic_cast<const parser::CallExpr*>(expr)) {
-        check_call(call, local_env);
-        // Try to get return type from function
-        if (auto callee_var = dynamic_cast<const parser::VarRef*>(call->callee.get())) {
-            auto it = local_env.functions.find(callee_var->name);
-            if (it != local_env.functions.end()) {
-                return it->second;
-            }
-            auto global_it = type_env_.functions.find(callee_var->name);
-            if (global_it != type_env_.functions.end()) {
-                return global_it->second;
-            }
-        }
-        return TypeKind::Unknown;
-    }
-    
+TypeKind TypeChecker::check_expr(const parser::Expr *expr,
+                                 ScopedTypeEnv &local_env) {
+  if (!expr)
     return TypeKind::Unknown;
+
+  if (auto num = dynamic_cast<const parser::NumberLiteral *>(expr)) {
+    return (num->value.find('.') != std::string::npos) ? TypeKind::Float
+                                                        : TypeKind::Int;
+  }
+
+  if (dynamic_cast<const parser::StringLiteral *>(expr)) {
+    return TypeKind::String;
+  }
+
+  if (dynamic_cast<const parser::BoolLiteral *>(expr)) {
+    return TypeKind::Bool;
+  }
+
+  if (auto var_ref = dynamic_cast<const parser::VarRef *>(expr)) {
+    if (const auto *found = local_env.lookup(var_ref->name)) {
+      return *found;
+    }
+    return TypeKind::Unknown;
+  }
+
+  if (auto unary = dynamic_cast<const parser::UnaryOp *>(expr)) {
+    TypeKind operand = check_expr(unary->operand.get(), local_env);
+
+    if (unary->op == "not") {
+      if (!is_truthy_compatible(operand)) {
+        add_error("Operand of 'not' must be truthy-compatible",
+                  get_location(unary));
+      }
+      return TypeKind::Bool;
+    }
+
+    if (unary->op == "-") {
+      if (!is_numeric(operand) && operand != TypeKind::Unknown) {
+        add_error("Unary '-' operand must be numeric", get_location(unary));
+      }
+      return operand;
+    }
+
+    return TypeKind::Unknown;
+  }
+
+  if (auto logical = dynamic_cast<const parser::LogicalExpr *>(expr)) {
+    TypeKind left_type = check_expr(logical->left.get(), local_env);
+    TypeKind right_type = check_expr(logical->right.get(), local_env);
+
+    if (!is_truthy_compatible(left_type)) {
+      add_error("Left operand of logical operator must be truthy-compatible",
+                get_location(logical));
+    }
+    if (!is_truthy_compatible(right_type)) {
+      add_error("Right operand of logical operator must be truthy-compatible",
+                get_location(logical));
+    }
+
+    return TypeKind::Bool;
+  }
+
+  if (auto bin_op = dynamic_cast<const parser::BinaryOp *>(expr)) {
+    TypeKind left_type = check_expr(bin_op->left.get(), local_env);
+    TypeKind right_type = check_expr(bin_op->right.get(), local_env);
+
+    check_binary_op(bin_op, left_type, right_type, get_location(bin_op));
+
+    if (is_comparison_op(bin_op->op)) {
+      return TypeKind::Bool;
+    }
+
+    if (bin_op->op == "+" && left_type == TypeKind::String &&
+        right_type == TypeKind::String) {
+      return TypeKind::String;
+    }
+
+    if (is_numeric(left_type) && is_numeric(right_type)) {
+      if (bin_op->op == "/") {
+        return TypeKind::Float;
+      }
+      return (left_type == TypeKind::Float || right_type == TypeKind::Float)
+                 ? TypeKind::Float
+                 : TypeKind::Int;
+    }
+
+    return TypeKind::Unknown;
+  }
+
+  if (auto call = dynamic_cast<const parser::CallExpr *>(expr)) {
+    check_call(call, local_env);
+
+    if (auto callee_var = dynamic_cast<const parser::VarRef *>(call->callee.get())) {
+      if (callee_var->name == "print") {
+        return TypeKind::Void;
+      }
+
+      auto it = type_env_.functions.find(callee_var->name);
+      if (it != type_env_.functions.end()) {
+        return it->second;
+      }
+    }
+
+    return TypeKind::Unknown;
+  }
+
+  return TypeKind::Unknown;
 }
 
-void TypeChecker::check_binary_op(const parser::BinaryOp* op, TypeKind left_type, TypeKind right_type, lexer::SourceLocation loc) {
-    // String concatenation: only allow string + string
-    if (op->op == "+") {
-        if (left_type == TypeKind::String && right_type != TypeKind::String) {
-            std::ostringstream msg;
-            msg << "Cannot concatenate string with non-string type";
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), loc);
-        }
-        if (right_type == TypeKind::String && left_type != TypeKind::String) {
-            std::ostringstream msg;
-            msg << "Cannot concatenate non-string type with string";
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), loc);
-        }
+void TypeChecker::check_binary_op(const parser::BinaryOp *op, TypeKind left_type,
+                                  TypeKind right_type,
+                                  lexer::SourceLocation loc) {
+  if (!op)
+    return;
+
+  if (is_comparison_op(op->op)) {
+    const bool both_numeric = is_numeric(left_type) && is_numeric(right_type);
+    const bool both_string =
+        left_type == TypeKind::String && right_type == TypeKind::String;
+    const bool both_bool = left_type == TypeKind::Bool && right_type == TypeKind::Bool;
+    const bool has_unknown =
+        left_type == TypeKind::Unknown || right_type == TypeKind::Unknown;
+
+    if (both_numeric || both_string || has_unknown)
+      return;
+
+    if (both_bool && (op->op == "==" || op->op == "!="))
+      return;
+
+    add_error("Invalid operand types for comparison operator '" + op->op + "'",
+              loc);
+    return;
+  }
+
+  if (op->op == "+" && (left_type == TypeKind::String || right_type == TypeKind::String)) {
+    if (!(left_type == TypeKind::String && right_type == TypeKind::String)) {
+      add_error("String concatenation requires string + string", loc);
     }
-    
-    // Numeric operations: only allow numeric types
-    if (op->op == "+" || op->op == "-" || op->op == "*" || op->op == "/") {
-        bool left_numeric = (left_type == TypeKind::Int || left_type == TypeKind::Float);
-        bool right_numeric = (right_type == TypeKind::Int || right_type == TypeKind::Float);
-        
-        if (!left_numeric && left_type != TypeKind::Unknown) {
-            std::ostringstream msg;
-            msg << "Left operand of '" << op->op << "' must be numeric, got " << type_to_string(left_type);
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), loc);
-        }
-        
-        if (!right_numeric && right_type != TypeKind::Unknown) {
-            std::ostringstream msg;
-            msg << "Right operand of '" << op->op << "' must be numeric, got " << type_to_string(right_type);
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), loc);
-        }
-        
-        // If both are strings and op is not +, error
-        if (left_type == TypeKind::String && right_type == TypeKind::String && op->op != "+") {
-            std::ostringstream msg;
-            msg << "Operation '" << op->op << "' not supported for string types";
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), loc);
-        }
+    return;
+  }
+
+  if (op->op == "+" || op->op == "-" || op->op == "*" || op->op == "/") {
+    if (!is_numeric(left_type) && left_type != TypeKind::Unknown) {
+      add_error("Left operand of '" + op->op + "' must be numeric, got " +
+                    type_to_string(left_type),
+                loc);
     }
+
+    if (!is_numeric(right_type) && right_type != TypeKind::Unknown) {
+      add_error("Right operand of '" + op->op + "' must be numeric, got " +
+                    type_to_string(right_type),
+                loc);
+    }
+  }
 }
 
-void TypeChecker::check_call(const parser::CallExpr* call, const TypeEnv& local_env) {
-    if (!call || !call->callee) return;
-    
-    // For now, we don't have function signatures with parameter types
-    // So we can't fully validate argument types
-    // This is a placeholder for future enhancement
-    
-    // Check that all arguments can be type-checked
-    for (const auto& arg : call->args) {
-        check_expr(arg.get(), local_env);
+void TypeChecker::check_call(const parser::CallExpr *call,
+                             ScopedTypeEnv &local_env) {
+  if (!call || !call->callee)
+    return;
+
+  for (const auto &arg : call->args) {
+    check_expr(arg.get(), local_env);
+  }
+
+  if (auto callee_var = dynamic_cast<const parser::VarRef *>(call->callee.get())) {
+    if (callee_var->name == "print")
+      return;
+
+    if (type_env_.functions.find(callee_var->name) == type_env_.functions.end()) {
+      add_error("Call to unknown function '" + callee_var->name + "'",
+                get_location(call));
     }
+  }
 }
 
-void TypeChecker::check_assignment(const parser::AssignStmt* assign, const TypeEnv& local_env) {
-    if (!assign) return;
-    
-    TypeKind value_type = check_expr(assign->value.get(), local_env);
-    
-    // Check if variable already exists with a different type
-    auto it = local_env.vars.find(assign->target);
-    if (it != local_env.vars.end()) {
-        TypeKind existing_type = it->second;
-        if (existing_type != TypeKind::Unknown && value_type != TypeKind::Unknown && 
-            existing_type != value_type) {
-            std::ostringstream msg;
-            msg << "Cannot assign " << type_to_string(value_type) 
-                << " to variable '" << assign->target << "' of type " << type_to_string(existing_type);
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), get_location(assign));
-        }
+void TypeChecker::check_assignment(const parser::AssignStmt *assign,
+                                   ScopedTypeEnv &local_env) {
+  if (!assign)
+    return;
+
+  TypeKind value_type = check_expr(assign->value.get(), local_env);
+
+  if (const auto *existing = local_env.lookup_current(assign->target)) {
+    if (*existing != TypeKind::Unknown && value_type != TypeKind::Unknown) {
+      const bool both_numeric = is_numeric(*existing) && is_numeric(value_type);
+      if (!both_numeric && *existing != value_type) {
+        add_error("Cannot assign " + type_to_string(value_type) +
+                      " to variable '" + assign->target + "' of type " +
+                      type_to_string(*existing),
+                  get_location(assign));
+        return;
+      }
     }
-    
-    // Check global env
-    auto global_it = type_env_.vars.find(assign->target);
-    if (global_it != type_env_.vars.end()) {
-        TypeKind existing_type = global_it->second;
-        if (existing_type != TypeKind::Unknown && value_type != TypeKind::Unknown && 
-            existing_type != value_type) {
-            std::ostringstream msg;
-            msg << "Cannot assign " << type_to_string(value_type) 
-                << " to variable '" << assign->target << "' of type " << type_to_string(existing_type);
-            errors_.push_back(msg.str());
-            throw TypeCheckError(msg.str(), get_location(assign));
-        }
-    }
+
+    local_env.set_local(assign->target, merge_assignment_type(*existing, value_type));
+    return;
+  }
+
+  local_env.set_local(assign->target, value_type);
 }
 
-lexer::SourceLocation TypeChecker::get_location(const parser::Node* node) {
-    // For now, return default location
-    // In a full implementation, AST nodes would store source locations
-    return {0, 0};
+lexer::SourceLocation TypeChecker::get_location(const parser::Node *node) {
+  (void)node;
+  // For now, return default location.
+  // In a full implementation, AST nodes would store source locations.
+  return {0, 0};
 }
 
 namespace cimple {
 namespace semantic {
 
-bool check_types(const parser::Module& module, const TypeEnv& type_env, std::vector<std::string>& errors) {
-    TypeChecker checker(module, type_env);
-    errors = checker.get_errors();
-    return errors.empty();
+bool check_types(const parser::Module &module, const TypeEnv &type_env,
+                 std::vector<std::string> &errors) {
+  TypeChecker checker(module, type_env);
+  errors = checker.get_errors();
+  return errors.empty();
 }
 
 } // namespace semantic
