@@ -2,7 +2,6 @@
 #include <cmath>
 #include <iostream>
 
-
 using namespace cimple;
 using namespace cimple::eval;
 
@@ -149,6 +148,38 @@ std::optional<Value> cimple::eval::evaluate_expr(
     return std::nullopt;
   }
 
+  // --- Logical operators (and / or) with short-circuit evaluation ---
+  // These are distinct from BinaryOp: the RHS may never be evaluated.
+  // Both always return a Bool result (truthiness semantics).
+  if (auto lg = dynamic_cast<const parser::LogicalExpr *>(expr)) {
+    // Evaluate left operand unconditionally
+    auto left = evaluate_expr(lg->left.get(), tenv, venv, functions);
+    if (!left)
+      return std::nullopt;
+
+    if (lg->op == "and") {
+      // Short-circuit: if left is falsy, skip right entirely
+      if (!is_truthy(*left))
+        return make_bool(false);
+      auto right = evaluate_expr(lg->right.get(), tenv, venv, functions);
+      if (!right)
+        return std::nullopt;
+      return make_bool(is_truthy(*right));
+    }
+
+    if (lg->op == "or") {
+      // Short-circuit: if left is truthy, skip right entirely
+      if (is_truthy(*left))
+        return make_bool(true);
+      auto right = evaluate_expr(lg->right.get(), tenv, venv, functions);
+      if (!right)
+        return std::nullopt;
+      return make_bool(is_truthy(*right));
+    }
+
+    return std::nullopt;
+  }
+
   // --- Binary operators ---
   if (auto b = dynamic_cast<const parser::BinaryOp *>(expr)) {
     auto L = evaluate_expr(b->left.get(), tenv, venv, functions);
@@ -280,10 +311,11 @@ std::optional<Value> cimple::eval::evaluate_expr(
         }
         semantic::TypeEnv local_tenv;
         for (auto &bs : fn->body) {
-          auto ret = cimple::eval::evaluate_stmt(bs.get(), local_tenv,
+          auto res = cimple::eval::evaluate_stmt(bs.get(), local_tenv,
                                                  local_venv, functions);
-          if (ret)
-            return ret;
+          if (res.is_return())
+            return res.value; // unwrap Value from StmtResult::Return
+          // Break/Continue can't escape a function call — treat as error/ignore
         }
         return std::nullopt;
       }
@@ -296,38 +328,50 @@ std::optional<Value> cimple::eval::evaluate_expr(
 // evaluate_stmt
 // ---------------------------------------------------------------------------
 
-std::optional<Value> cimple::eval::evaluate_stmt(
+StmtResult cimple::eval::evaluate_stmt(
     const parser::Stmt *stmt, const semantic::TypeEnv &tenv, ValueEnv &venv,
     const std::unordered_map<std::string, parser::FuncDef *> &functions) {
   if (!stmt)
-    return std::nullopt;
+    return StmtResult::normal();
 
+  // --- Assignment ---
   if (auto as = dynamic_cast<const parser::AssignStmt *>(stmt)) {
     auto v = evaluate_expr(as->value.get(), tenv, venv, functions);
     if (v)
       venv[as->target] = v->to_cimple_var();
-    return std::nullopt;
+    return StmtResult::normal();
   }
+
+  // --- Expression statement (e.g. a function call like print(...)) ---
   if (auto es = dynamic_cast<const parser::ExprStmt *>(stmt)) {
     evaluate_expr(es->expr.get(), tenv, venv, functions);
-    return std::nullopt;
+    return StmtResult::normal();
   }
+
+  // --- return ---
   if (auto rs = dynamic_cast<const parser::ReturnStmt *>(stmt)) {
-    return evaluate_expr(rs->value.get(), tenv, venv, functions);
+    auto v = evaluate_expr(rs->value.get(), tenv, venv, functions);
+    return StmtResult::ret(v);
   }
-  if (auto fn = dynamic_cast<const parser::FuncDef *>(stmt)) {
-    // FuncDef at statement level is handled by the module runner — skip here
-    (void)fn;
-    return std::nullopt;
-  }
+
+  // --- break ---
+  if (dynamic_cast<const parser::BreakStmt *>(stmt))
+    return StmtResult::brk();
+
+  // --- continue ---
+  if (dynamic_cast<const parser::ContinueStmt *>(stmt))
+    return StmtResult::cont();
+
+  // --- FuncDef at statement level (registered by module runner, skip here) ---
+  if (dynamic_cast<const parser::FuncDef *>(stmt))
+    return StmtResult::normal();
 
   // --- if / elif / else ---
   if (auto is = dynamic_cast<const parser::IfStmt *>(stmt)) {
     for (auto &branch : is->branches) {
       bool take = false;
       if (!branch.condition) {
-        // else branch — always take
-        take = true;
+        take = true; // else branch
       } else {
         auto cond =
             evaluate_expr(branch.condition.get(), tenv, venv, functions);
@@ -335,30 +379,45 @@ std::optional<Value> cimple::eval::evaluate_stmt(
       }
       if (take) {
         for (auto &s : branch.body) {
-          auto ret = evaluate_stmt(s.get(), tenv, venv, functions);
-          if (ret)
-            return ret; // propagate return
+          auto res = evaluate_stmt(s.get(), tenv, venv, functions);
+          if (!res.is_normal())
+            return res; // propagate Return, Break, Continue
         }
         break; // only execute the first matching branch
       }
     }
-    return std::nullopt;
+    return StmtResult::normal();
   }
 
   // --- while ---
+  // This is the ONLY place that catches Break and Continue.
+  // Return still propagates upward.
   if (auto ws = dynamic_cast<const parser::WhileStmt *>(stmt)) {
     while (true) {
+      // Evaluate condition — exits loop if falsy
       auto cond = evaluate_expr(ws->condition.get(), tenv, venv, functions);
       if (!cond || !is_truthy(*cond))
         break;
+
+      // Execute loop body
+      bool did_break = false;
       for (auto &s : ws->body) {
-        auto ret = evaluate_stmt(s.get(), tenv, venv, functions);
-        if (ret)
-          return ret; // propagate return out of while
+        auto res = evaluate_stmt(s.get(), tenv, venv, functions);
+        if (res.is_break()) {
+          did_break = true;
+          break; // break exits the body loop
+        }
+        if (res.is_continue()) {
+          break; // continue skips rest of body, re-checks condition
+        }
+        if (res.is_return())
+          return res; // propagate return upward (out of while)
       }
+      if (did_break)
+        break; // break exits the while loop itself
     }
-    return std::nullopt;
+    return StmtResult::normal();
   }
 
-  return std::nullopt;
+  return StmtResult::normal();
 }

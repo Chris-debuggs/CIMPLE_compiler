@@ -1,0 +1,10 @@
+# Test 13: break and continue in a while loop
+# Pattern from the design doc — canonical example
+i = 0
+while True:
+    i = i + 1
+    if i == 3:
+        continue
+    if i == 5:
+        break
+    print(i)

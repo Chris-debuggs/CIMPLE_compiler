@@ -1,0 +1,6 @@
+# Test 12: Short-circuit OR — right side must not execute when left is truthy
+# True or X → must return True without evaluating X
+# We test with a comparison that would be wrong if evaluated
+x = 0
+print(True or x == 1)
+print(False or x == 0)

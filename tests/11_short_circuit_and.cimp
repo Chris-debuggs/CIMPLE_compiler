@@ -1,0 +1,4 @@
+# Test 11: Short-circuit AND — division by zero must not execute
+# x = 0, so (x != 0) is False, so (10 / x > 2) must NEVER run
+x = 0
+print(x != 0 and 10 / x > 2)

@@ -49,6 +49,18 @@ std::unique_ptr<Stmt> Parser::parse_statement() {
   if (t.type == lexer::TokenType::KEYWORD && t.lexeme == "while") {
     return parse_while();
   }
+  if (t.type == lexer::TokenType::KEYWORD && t.lexeme == "break") {
+    ts.next(); // consume 'break'
+    if (ts.peek().type == lexer::TokenType::NEWLINE)
+      ts.next();
+    return std::make_unique<BreakStmt>();
+  }
+  if (t.type == lexer::TokenType::KEYWORD && t.lexeme == "continue") {
+    ts.next(); // consume 'continue'
+    if (ts.peek().type == lexer::TokenType::NEWLINE)
+      ts.next();
+    return std::make_unique<ContinueStmt>();
+  }
   if (t.type == lexer::TokenType::KEYWORD && t.lexeme == "return") {
     ts.next();
     auto val = parse_expression();
@@ -204,17 +216,47 @@ std::unique_ptr<Stmt> Parser::parse_simple_statement() {
 }
 
 // ---------------------------------------------------------------------------
-// Expressions (precedence low → high)
-// expression → comparison
-// comparison → additive (( '==' | '!=' | '<' | '>' | '<=' | '>=' ) additive)*
-// additive   → term (( '+' | '-' ) term)*
-// term       → unary (( '*' | '/' ) unary)*
-// unary      → 'not' unary | '-' unary | factor
-// factor     → NUMBER | STRING | 'True' | 'False' | IDENT ['(' arglist ')'] |
-// '(' expression ')'
+// Expression grammar (low → high precedence):
+//   logical_or  → logical_and ('or' logical_and)*
+//   logical_and → comparison  ('and' comparison)*
+//   comparison  → additive    (( == | != | < | > | <= | >= ) additive)*
+//   additive    → term        (( '+' | '-' ) term)*
+//   term        → unary       (( '*' | '/' ) unary)*
+//   unary       → 'not' comparison | '-' unary | factor
+//   factor      → NUMBER | STRING | 'True' | 'False' | IDENT ['(' args ')'] |
+//   '(' expr ')'
 // ---------------------------------------------------------------------------
 
-std::unique_ptr<Expr> Parser::parse_expression() { return parse_comparison(); }
+// Entry point: routes through the full precedence chain.
+std::unique_ptr<Expr> Parser::parse_expression() { return parse_logical_or(); }
+
+// logical_or: lowest precedence among operators.
+// Short-circuit: if left is truthy, right is NOT evaluated.
+std::unique_ptr<Expr> Parser::parse_logical_or() {
+  auto left = parse_logical_and();
+  while (ts.peek().type == lexer::TokenType::KEYWORD &&
+         ts.peek().lexeme == "or") {
+    ts.next(); // consume 'or'
+    auto right = parse_logical_and();
+    left =
+        std::make_unique<LogicalExpr>("or", std::move(left), std::move(right));
+  }
+  return left;
+}
+
+// logical_and: binds tighter than 'or', looser than comparisons.
+// Short-circuit: if left is falsy, right is NOT evaluated.
+std::unique_ptr<Expr> Parser::parse_logical_and() {
+  auto left = parse_comparison();
+  while (ts.peek().type == lexer::TokenType::KEYWORD &&
+         ts.peek().lexeme == "and") {
+    ts.next(); // consume 'and'
+    auto right = parse_comparison();
+    left =
+        std::make_unique<LogicalExpr>("and", std::move(left), std::move(right));
+  }
+  return left;
+}
 
 std::unique_ptr<Expr> Parser::parse_comparison() {
   auto left = parse_additive();

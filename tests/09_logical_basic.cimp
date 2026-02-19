@@ -1,0 +1,5 @@
+# Test 9: Basic truth table for and / or
+print(True and False)
+print(True or False)
+print(False or False)
+print(True and True)

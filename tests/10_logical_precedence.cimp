@@ -1,0 +1,5 @@
+# Test 10: Precedence — 'and' binds tighter than 'or'
+# True or (False and False) = True or False = True
+print(True or False and False)
+# (False or False) and True = False and True = False
+print(False or False and True)

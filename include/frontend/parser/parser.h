@@ -7,7 +7,6 @@
 #include <string>
 #include <vector>
 
-
 namespace cimple {
 namespace parser {
 
@@ -67,6 +66,18 @@ struct UnaryOp : Expr {
   std::string to_string() const override { return "UnaryOp(" + op + ")"; }
 };
 
+// Logical and/or with short-circuit semantics.
+// Separate from BinaryOp so the evaluator and LLVM backend can implement
+// short-circuit branching without touching arithmetic code paths.
+struct LogicalExpr : Expr {
+  std::string op; // "and" or "or"
+  std::unique_ptr<Expr> left;
+  std::unique_ptr<Expr> right;
+  LogicalExpr(std::string o, std::unique_ptr<Expr> l, std::unique_ptr<Expr> r)
+      : op(std::move(o)), left(std::move(l)), right(std::move(r)) {}
+  std::string to_string() const override { return "LogicalExpr(" + op + ")"; }
+};
+
 // Statements
 struct Stmt : Node {};
 
@@ -118,6 +129,16 @@ struct WhileStmt : Stmt {
   std::string to_string() const override { return "WhileStmt"; }
 };
 
+// break — exits the nearest enclosing while loop
+struct BreakStmt : Stmt {
+  std::string to_string() const override { return "BreakStmt"; }
+};
+
+// continue — skips the rest of the current loop body, starts next iteration
+struct ContinueStmt : Stmt {
+  std::string to_string() const override { return "ContinueStmt"; }
+};
+
 struct Module {
   std::vector<std::unique_ptr<Stmt>> body;
 };
@@ -140,14 +161,16 @@ private:
   // Parse an indented block of statements (after NEWLINE + INDENT)
   std::vector<std::unique_ptr<Stmt>> parse_block();
 
-  // expressions (precedence: comparison > arithmetic > term > factor)
-  std::unique_ptr<Expr> parse_expression(); // handles 'or'/'and' (future)
-  std::unique_ptr<Expr> parse_comparison(); // handles ==, !=, <, >, <=, >=
-  std::unique_ptr<Expr> parse_additive();   // handles + and -
-  std::unique_ptr<Expr> parse_term();       // handles * and /
-  std::unique_ptr<Expr> parse_unary();      // handles 'not' and unary '-'
-  std::unique_ptr<Expr>
-  parse_factor(); // handles literals, identifiers, calls, parens
+  // Expression grammar (low → high precedence):
+  //   logical_or → logical_and → comparison → additive → term → unary → factor
+  std::unique_ptr<Expr> parse_expression();  // entry: calls parse_logical_or
+  std::unique_ptr<Expr> parse_logical_or();  // handles 'or'
+  std::unique_ptr<Expr> parse_logical_and(); // handles 'and'
+  std::unique_ptr<Expr> parse_comparison();  // handles ==, !=, <, >, <=, >=
+  std::unique_ptr<Expr> parse_additive();    // handles + and -
+  std::unique_ptr<Expr> parse_term();        // handles * and /
+  std::unique_ptr<Expr> parse_unary();       // handles 'not' and unary '-'
+  std::unique_ptr<Expr> parse_factor(); // literals, identifiers, calls, parens
   std::vector<std::unique_ptr<Expr>> parse_arglist();
 };
 
